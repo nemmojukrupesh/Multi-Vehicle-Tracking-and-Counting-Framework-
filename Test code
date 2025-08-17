@@ -1,0 +1,108 @@
+import cv2
+import pandas as pd
+import numpy as np
+from ultralytics import YOLO
+from tracker import *
+import time
+
+# Load YOLO model
+model = YOLO('yolov8s.pt')
+
+def RGB(event, x, y, flags, param):
+    if event == cv2.EVENT_MOUSEMOVE:
+        colorsBGR = [x, y]
+        print(colorsBGR)
+
+cv2.namedWindow('RGB')
+cv2.setMouseCallback('RGB', RGB)
+
+# Open video file
+cap = cv2.VideoCapture('road.mp4')
+
+# Load class list
+with open("coco.txt", "r") as my_file:
+    class_list = my_file.read().split("\n")
+
+vehicle_classes = ["person", "bicycle", "car", "motorcycle", "bus", "train", "truck", "boat", "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "cow"]
+
+count = 0
+tracker = Tracker()
+cy1, cy2 = 322, 368
+offset = 6
+vh_down, vh_up = {}, {}
+counter, counter1 = [], []
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    count += 1
+    if count % 3 != 0:
+        continue
+
+    frame = cv2.resize(frame, (1020, 500))
+    results = model.predict(frame)
+    px = pd.DataFrame(results[0].boxes.data).astype("float")
+    detected_objects = []
+
+    for _, row in px.iterrows():
+        x1, y1, x2, y2 = map(int, row[:4])
+        d = int(row[5])
+        
+        if 0 <= d < len(class_list):  # Check index validity
+            c = class_list[d]
+            if c in vehicle_classes:  # Filter for all vehicle types
+                detected_objects.append([x1, y1, x2, y2, c])
+        else:
+            print(f"Warning: Index {d} out of range for class_list")
+
+    bbox_id = tracker.update([obj[:4] for obj in detected_objects])
+    for i, (x3, y3, x4, y4, id) in enumerate(bbox_id):
+        cx, cy = (x3 + x4) // 2, (y3 + y4) // 2
+        vehicle_type = detected_objects[i][4] if i < len(detected_objects) else "Unknown"
+        
+        cv2.rectangle(frame, (x3, y3), (x4, y4), (0, 0, 255), 2)
+        
+        # Display vehicle name above the vehicle
+        cv2.putText(frame, vehicle_type, (x3, y3 - 10), cv2.FONT_HERSHEY_COMPLEX, 0.6, (0, 255, 0), 2)
+        
+        # Display vehicle ID inside the red bounding box
+       
+
+        if cy1 - offset < cy < cy1 + offset:
+            vh_down[id] = time.time()
+        if id in vh_down and cy2 - offset < cy < cy2 + offset:
+            elapsed_time = time.time() - vh_down[id]
+            if id not in counter:
+                counter.append(id)
+                speed_kmh = (10 / elapsed_time) * 3.6
+                cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
+                cv2.putText(frame, f"{int(speed_kmh)} Km/h", (x4, y4), cv2.FONT_HERSHEY_COMPLEX, 0.8, (0, 255, 255), 2)
+
+        if cy2 - offset < cy < cy2 + offset:
+            vh_up[id] = time.time()
+        if id in vh_up and cy1 - offset < cy < cy1 + offset:
+            elapsed1_time = time.time() - vh_up[id]
+            if id not in counter1:
+                counter1.append(id)
+                speed_kmh1 = (10 / elapsed1_time) * 3.6
+                cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
+                cv2.putText(frame, f"{int(speed_kmh1)} Km/h", (x4, y4), cv2.FONT_HERSHEY_COMPLEX, 0.8, (0, 255, 255), 2)
+
+    cv2.line(frame, (274, cy1), (814, cy1), (255, 255, 255), 1)
+    cv2.putText(frame, 'L1', (277, 320), cv2.FONT_HERSHEY_COMPLEX, 0.8, (0, 255, 255), 2)
+    cv2.line(frame, (177, cy2), (927, cy2), (255, 255, 255), 1)
+    cv2.putText(frame, 'L2', (182, 367), cv2.FONT_HERSHEY_COMPLEX, 0.8, (0, 255, 255), 2)
+    cv2.putText(frame, f'goingdown: {len(counter)}', (60, 90), cv2.FONT_HERSHEY_COMPLEX, 0.8, (0, 255, 255), 2)
+    cv2.putText(frame, f'goingup: {len(counter1)}', (60, 130), cv2.FONT_HERSHEY_COMPLEX, 0.8, (0, 255, 255), 2)
+
+    cv2.imshow("RGB", frame)
+    if cv2.waitKey(1) & 0xFF == 27:
+        break
+
+cap.release()
+cv2.destroyAllWindows()
+
+
+
